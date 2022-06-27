@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+
+import sys
+from datetime import datetime
+import serial
+
+if len(sys.argv)<3:
+  print("Usage: canmonitor <serial port> <CAN speed> [extframe=0] [filter (hex) =00000000] [mask (hex) =00000000] [mode=0] [send_once=0]")
+  print("Example: canmonitor /dev/ttyUSB0 500000")
+  sys.exit(1)
+
+def asHex(str):
+  return ' '.join(format(x, '02x') for x in str)
+
+def init_can(ser, speed, extframe=0, filter=0, mask=0, mode=0, send_once=0):
+  speed = int(speed)
+  class Packet:
+    checksum=0x12
+    data=b'\xaa\x55\x12'
+    
+    def add(self, x): 
+      self.checksum+=x
+      self.data+=bytes([int(x)])
+      
+    def addInt(self, x):
+      for i in range(4):
+        self.add(x % 256)
+        x=x//256
+
+  packet=Packet()
+  try:
+    sp=[1000000,800000,500000,400000,250000,200000,125000,100000,50000,20000,10000,50000].index(speed)+1
+  except ValueError:
+    print("invalid CAN speed, allowed speeds are: 1000000, 800000, 500000, 400000, 250000, 200000, 125000, 100000, 50000, 20000, 10000, 50000")
+    sys.exit(1)
+  packet.add(sp)
+  packet.add(2 if int(extframe)!=0 else 1)
+  packet.addInt(filter)
+  packet.addInt(mask)
+  packet.add(mode)
+  packet.add(send_once)
+  packet.addInt(0)
+  packet.add(packet.checksum % 256)
+#  print("init: "+asHex(packet.data))
+  ser.write(packet.data)
+
+class ReadPacket:
+  def __init__(self, ser):
+    self.ser=ser
+
+  def read(self):
+    self.buffer=b''
+#    while self.ser.in_waiting>0:
+    while True:
+      if len(self.buffer)==0 and self.ser.read()!=b'\xaa':
+        continue
+      self.buffer+=self.ser.read(1)
+      if len(self.buffer)>0 and len(self.buffer)==self.buffer[0]%0x10+4:
+#        print("got: "+self.buffer.hex())
+        if self.buffer[-1]==0x55:
+          return self.buffer[:-1]
+        self.buffer=b''
+    return False   
+  
+  def sender(self): return self.buffer[2]*256+self.buffer[1]
+  def data(self):   return self.buffer[3:-1]
+
+# main
+
+with serial.Serial(sys.argv[1], 2000000) as ser: # yes, 2Mbaud :-)
+  init_can(ser, sys.argv[2], int(sys.argv[3]) if len(sys.argv)>3 else 0, int(sys.argv[4],16) if len(sys.argv)>4 else 0, int(sys.argv[5],16) if len(sys.argv)>5 else 0, int(sys.argv[6]) if len(sys.argv)>6 else 0, int(sys.argv[7]) if len(sys.argv)>7 else 0)
+  pack=ReadPacket(ser)
+  while True:
+    pack.read()
+    
+    # print timestamp time of reception in miliseconds
+    timestr=datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print("%s: %04x: %s" % (timestr, pack.sender(), asHex(pack.data())))
+
+
+    
+    

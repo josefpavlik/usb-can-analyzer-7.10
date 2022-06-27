@@ -1,0 +1,53 @@
+#!/usr/bin/python3
+
+import sys
+import serial
+
+if len(sys.argv)<3:
+  print("Usage: cansend <serial port> <frametype> <addr (hex)> [up to 8 hex data bytes]")
+  print("frametype is one of:")
+  print("  0: standard frame")
+  print("  1: remote frame")
+  print("  2: extended frame")
+  print("  3: extended remote frame")
+  print("Example: cansend /dev/ttyUSB0 0 0041 12 34 56 78")
+  sys.exit(1)
+
+def asHex(str):
+  return ' '.join(format(x, '02x') for x in str)
+
+def can_send(ser, frametype, addr, data):
+  class Packet:
+    data=b'\xaa'
+    
+    def add(self, x): 
+      self.data+=bytes([int(x)])
+      
+    def addInt2(self, x):
+      for i in range(2):
+        self.add(x % 256)
+        x=x//256
+
+    def addData(self, data):
+      for i in range(len(data)):
+        self.add(int(data[i],16))
+
+  packet=Packet()
+  packet.add(0xc0 | (frametype<<4) | (len(data)))
+  packet.addInt2(addr)
+  packet.addData(data)
+  packet.add(0x55)
+#  print("sending: "+asHex(packet.data))
+  ser.write(packet.data)
+
+
+
+# main
+
+with serial.Serial(sys.argv[1], 2000000) as ser: # yes, 2Mbaud :-)
+    can_send(ser, int(sys.argv[2]), int(sys.argv[3],16), sys.argv[4:])
+    
+
+
+    
+    
